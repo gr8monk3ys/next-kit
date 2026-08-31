@@ -17,8 +17,29 @@ function readSecretKey() {
   }
   return void 0;
 }
-var cached;
-var cachedKey;
+var clients = /* @__PURE__ */ new Map();
+var objectIdSeq = 0;
+var objectIds = /* @__PURE__ */ new WeakMap();
+function stableValue(value) {
+  if (value === null) return "null";
+  if (typeof value === "object" || typeof value === "function") {
+    let id = objectIds.get(value);
+    if (id === void 0) {
+      id = objectIdSeq += 1;
+      objectIds.set(value, id);
+    }
+    return `@${id}`;
+  }
+  return String(value);
+}
+function fingerprint(config) {
+  return Object.entries(config).filter(([, value]) => value !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([name, value]) => `${name}=${stableValue(value)}`).join("&");
+}
+var defaultConfig;
+function setDefaultStripeConfig(config) {
+  defaultConfig = config;
+  clients.clear();
+}
 function getStripe(options = {}) {
   const key = readSecretKey();
   if (!key) {
@@ -26,15 +47,21 @@ function getStripe(options = {}) {
       `Stripe is not configured: set one of ${SECRET_KEY_VARS.join(" or ")}.`
     );
   }
-  if (!cached || cachedKey !== key) {
-    cached = new Stripe(key, { typescript: true, ...options.config });
-    cachedKey = key;
+  const config = {
+    typescript: true,
+    ...defaultConfig,
+    ...options.config
+  };
+  const cacheKey = `${key}\0${fingerprint(config)}`;
+  let client = clients.get(cacheKey);
+  if (!client) {
+    client = new Stripe(key, config);
+    clients.set(cacheKey, client);
   }
-  return cached;
+  return client;
 }
 function resetStripeClient() {
-  cached = void 0;
-  cachedKey = void 0;
+  clients.clear();
 }
 var stripe = new Proxy({}, {
   get(_target, prop, receiver) {
@@ -48,17 +75,6 @@ var stripe = new Proxy({}, {
 });
 function isStripeConfigured() {
   return Boolean(readSecretKey() && process.env.STRIPE_PUBLISHABLE_KEY);
-}
-function getStripeMode() {
-  const secret = readSecretKey() ?? "";
-  const publishable = process.env.STRIPE_PUBLISHABLE_KEY ?? "";
-  if (secret.startsWith("sk_test_") || publishable.startsWith("pk_test_")) {
-    return "test";
-  }
-  if (secret.startsWith("sk_live_") || publishable.startsWith("pk_live_")) {
-    return "live";
-  }
-  return "unknown";
 }
 async function constructWebhookEvent(request, secretOrOptions) {
   const options = typeof secretOrOptions === "string" ? { secret: secretOrOptions } : secretOrOptions ?? {};
@@ -117,4 +133,4 @@ async function createBillingPortalSession(params) {
   });
 }
 
-export { constructWebhookEvent, createBillingPortalSession, createCheckoutSession, getStripe, getStripeMode, isStripeConfigured, resetStripeClient, stripe };
+export { constructWebhookEvent, createBillingPortalSession, createCheckoutSession, getStripe, isStripeConfigured, resetStripeClient, setDefaultStripeConfig, stripe };

@@ -128,7 +128,7 @@ declare function getClientId(request: Request, options?: GetClientIdOptions): st
  * `@gr8monk3ys/next-kit/rate-limit`
  *
  * One fixed-window limiter with a pluggable store, plus the request-handler
- * glue every app in the fleet had rewritten.
+ * glue that otherwise gets rewritten in every app.
  */
 
 interface RateLimitResult {
@@ -184,7 +184,7 @@ interface RateLimiter {
 declare function createRateLimiter(options: RateLimiterOptions): RateLimiter;
 /** `X-RateLimit-*` headers for a result, plus `Retry-After` when blocked. */
 declare function rateLimitHeaders(result: RateLimitResult): Record<string, string>;
-/** The 429 every app in the fleet hand-wrote, with the headers attached. */
+/** The standard 429 body, with the rate-limit headers attached. */
 declare function rateLimitExceededResponse(result: RateLimitResult, message?: string): Response;
 /** Copy the `X-RateLimit-*` headers onto a response you are already returning. */
 declare function addRateLimitHeaders<T extends Response>(response: T, result: RateLimitResult): T;

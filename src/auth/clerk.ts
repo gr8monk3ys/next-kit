@@ -12,6 +12,37 @@
  *
  * `@clerk/nextjs` is an optional peer, loaded on first use. Nothing here is
  * typed against a specific Clerk major, so v6 and v7 both work.
+ *
+ * ## Where the throwing guards belong
+ *
+ * `requireUser` and `requireRole` **throw**; they do not redirect. That makes
+ * them right for route handlers and wrong for Server Components:
+ *
+ * - **Route handler / API route** — catch and map. `authErrorResponse(error)`
+ *   turns the two error types into a 401 / 403 JSON response and returns `null`
+ *   for anything else, so you can re-throw what you did not recognise:
+ *
+ *   ```ts
+ *   export async function GET() {
+ *     try {
+ *       const user = await requireUser();
+ *       return Response.json(await load(user));
+ *     } catch (error) {
+ *       const response = authErrorResponse(error);
+ *       if (response) return response;
+ *       throw error;
+ *     }
+ *   }
+ *   ```
+ *
+ * - **Server Component / page** — do NOT let the throw escape. An uncaught
+ *   throw renders the error boundary and the visitor gets a 500, not a
+ *   sign-in prompt. Use `getUserOrNull()` and redirect yourself:
+ *
+ *   ```ts
+ *   const user = await getUserOrNull();
+ *   if (!user) redirect("/sign-in");
+ *   ```
  */
 
 /** The subset of Clerk's `auth()` return value this package reads. */
@@ -137,14 +168,25 @@ export interface ClerkAuthHelpersOptions<TUser> {
 export interface ClerkAuthHelpers<TUser> {
   /** The current user, or `null` if there isn't one. */
   getUserOrNull(): Promise<TUser | null>;
-  /** The current user, or a thrown {@link UnauthorizedError}. */
+  /**
+   * The current user, or a thrown {@link UnauthorizedError} (401).
+   *
+   * For route handlers, pair with {@link authErrorResponse}. In a Server
+   * Component prefer `getUserOrNull()` + `redirect()` — an uncaught throw there
+   * is a 500, not a sign-in redirect.
+   */
   requireUser(): Promise<TUser>;
   /** Whether the current user holds any of `roles`. */
   hasRole(roles: string | string[]): Promise<boolean>;
   /**
    * The current user, provided they hold one of `roles`.
-   * @throws {@link UnauthorizedError} when signed out,
-   *   {@link ForbiddenError} when signed in without the role.
+   *
+   * Throws, so the same rule applies as {@link ClerkAuthHelpers.requireUser}:
+   * map it with {@link authErrorResponse} in a route handler; in a Server
+   * Component use `hasRole()` and redirect yourself.
+   *
+   * @throws {@link UnauthorizedError} (401) when signed out,
+   *   {@link ForbiddenError} (403) when signed in without the role.
    */
   requireRole(roles: string | string[]): Promise<TUser>;
 }

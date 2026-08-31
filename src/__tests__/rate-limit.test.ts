@@ -55,6 +55,26 @@ describe("MemoryStore", () => {
     expect((await limiter.check("k")).ok).toBe(true);
   });
 
+  it("survives being destructured off the limiter", async () => {
+    // `const { checkRequest } = limiter` is a natural thing to write. A method
+    // body calling `this.check(...)` would throw "Cannot read properties of
+    // undefined" here.
+    const { check, checkRequest, reset } = createRateLimiter({
+      limit: 1,
+      windowMs: 60_000,
+    });
+
+    expect((await check("k")).ok).toBe(true);
+    expect((await check("k")).ok).toBe(false);
+    await reset("k");
+
+    const request = new Request("https://example.test/", {
+      headers: { "x-real-ip": "9.9.9.9" },
+    });
+    expect((await checkRequest(request)).ok).toBe(true);
+    expect((await checkRequest(request)).ok).toBe(false);
+  });
+
   it("rejects a non-positive limit or window", () => {
     expect(() => createRateLimiter({ limit: 0, windowMs: 1000 })).toThrow(TypeError);
     expect(() => createRateLimiter({ limit: 5, windowMs: 0 })).toThrow(TypeError);

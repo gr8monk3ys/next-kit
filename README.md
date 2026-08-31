@@ -16,7 +16,7 @@ The package is distributed as a GitHub release tarball, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.0.tar.gz"
+    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.1.tar.gz"
   }
 }
 ```
@@ -108,6 +108,9 @@ The other two kept a list of request timestamps and pruned it on every call,
 which is a sliding window; both paid for it in memory proportional to the
 traffic they were trying to limit.
 
+Both stores use it, so a limiter enforces the same thing whether or not Redis
+is configured — which was not true of the code this replaced.
+
 A fixed window admits, worst case, up to `2 × limit` requests across a window
 boundary. If that matters more to you than the cost, keep a sliding window
 outside this package — the `RateLimitStore` interface is three methods and is
@@ -138,11 +141,11 @@ getClientId(request, { sessionCookieNames: ["__session"] });
 import {
   stripe,
   getStripe,
+  setDefaultStripeConfig,
   constructWebhookEvent,
   createCheckoutSession,
   createBillingPortalSession,
   isStripeConfigured,
-  getStripeMode,
 } from "@gr8monk3ys/next-kit/stripe";
 
 // The client is built on first property access, never at import time.
@@ -168,8 +171,18 @@ key is read from `STRIPE_SECRET_KEY`, falling back to `STRIPE_API_KEY`, with
 wrapping quotes stripped — pasted `.env` values arrive with them often enough to
 be worth handling.
 
-`getStripeMode()` reports `"test" | "live" | "unknown"` from the key prefix
-without revealing the key, which makes it safe to surface in admin tooling.
+### Pinning an API version
+
+Clients are memoized on the secret key **and** the resolved config. If you pin
+an `apiVersion`, set it once at module scope so the bare `stripe` proxy carries
+it too:
+
+```ts
+setDefaultStripeConfig({ apiVersion: "2026-05-27.dahlia" });
+```
+
+Pass `config` to `getStripe()` only when you want a *separate* client with
+different settings — each distinct config gets its own instance.
 
 ## `@gr8monk3ys/next-kit/auth/clerk`
 
@@ -196,6 +209,27 @@ here. A signed-in Clerk user with no local row is treated as signed out.
 
 `requireRole` reads a `role` string off the resolved user by default; pass
 `getRole` for anything else.
+
+**`requireUser` and `requireRole` throw — they do not redirect.** That makes
+them right for route handlers and wrong for Server Components:
+
+```ts
+// Route handler: catch and map.
+export async function GET() {
+  try {
+    return Response.json(await load(await requireUser()));
+  } catch (error) {
+    const response = authErrorResponse(error); // 401 / 403, or null
+    if (response) return response;
+    throw error;
+  }
+}
+
+// Server Component: do NOT let it throw. An uncaught throw renders the error
+// boundary — the visitor gets a 500, not a sign-in prompt.
+const user = await getUserOrNull();
+if (!user) redirect("/sign-in");
+```
 
 For an environment-gated bypass (E2E runs, a local fallback session), pass
 `fallback` — it is consulted *before* Clerk and short-circuits it:

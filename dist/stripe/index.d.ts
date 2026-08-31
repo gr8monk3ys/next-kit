@@ -13,17 +13,30 @@ export { default as Stripe } from 'stripe';
  * so the client is built on first property access and not before.
  */
 
+/**
+ * Set config applied to every client this module builds, including the ones
+ * behind the bare `stripe` proxy.
+ *
+ * This is how an app pins an `apiVersion` once and has it hold everywhere.
+ * Without it, `stripe.customers` and `getStripe({ config: { apiVersion } })`
+ * would each build their own client and only one of them would carry the pin.
+ * Call it at module scope, before anything touches the client.
+ */
+declare function setDefaultStripeConfig(config?: Stripe.StripeConfig): void;
 interface GetStripeOptions {
-    /** Passed straight through to the `Stripe` constructor. */
+    /**
+     * Passed to the `Stripe` constructor, merged over any default set with
+     * {@link setDefaultStripeConfig}.
+     */
     config?: Stripe.StripeConfig;
 }
 /**
- * The shared client, built on first call.
+ * The shared client, built on first call and memoized per (key, config).
  *
  * @throws if neither `STRIPE_SECRET_KEY` nor `STRIPE_API_KEY` is set.
  */
 declare function getStripe(options?: GetStripeOptions): Stripe;
-/** Drop the memoized client. For tests that swap `process.env`. */
+/** Drop every memoized client. For tests that swap `process.env`. */
 declare function resetStripeClient(): void;
 /**
  * A `Stripe` you can import at module scope and destructure freely; the real
@@ -37,13 +50,6 @@ declare function resetStripeClient(): void;
 declare const stripe: Stripe;
 /** True when a secret key and a publishable key are both present. */
 declare function isStripeConfigured(): boolean;
-type StripeMode = "test" | "live" | "unknown";
-/**
- * Which Stripe environment the configured keys point at.
- *
- * Safe to surface in admin tooling: it reads the key's prefix, never the key.
- */
-declare function getStripeMode(): StripeMode;
 interface ConstructWebhookEventOptions {
     /** Signing secret. Default: `process.env.STRIPE_WEBHOOK_SECRET`. */
     secret?: string;
@@ -90,4 +96,4 @@ interface CreateBillingPortalSessionParams {
 /** Create a Billing Portal session. */
 declare function createBillingPortalSession(params: CreateBillingPortalSessionParams): Promise<Stripe.BillingPortal.Session>;
 
-export { type ConstructWebhookEventOptions, type CreateBillingPortalSessionParams, type CreateCheckoutSessionParams, type GetStripeOptions, type StripeMode, constructWebhookEvent, createBillingPortalSession, createCheckoutSession, getStripe, getStripeMode, isStripeConfigured, resetStripeClient, stripe };
+export { type ConstructWebhookEventOptions, type CreateBillingPortalSessionParams, type CreateCheckoutSessionParams, type GetStripeOptions, constructWebhookEvent, createBillingPortalSession, createCheckoutSession, getStripe, isStripeConfigured, resetStripeClient, setDefaultStripeConfig, stripe };

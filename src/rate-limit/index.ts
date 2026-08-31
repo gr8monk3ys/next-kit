@@ -2,7 +2,7 @@
  * `@gr8monk3ys/next-kit/rate-limit`
  *
  * One fixed-window limiter with a pluggable store, plus the request-handler
- * glue every app in the fleet had rewritten.
+ * glue that otherwise gets rewritten in every app.
  */
 
 import {
@@ -108,14 +108,17 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
     return result;
   };
 
+  // Closures, not methods: `const { checkRequest } = limiter` is a natural
+  // thing to write, and a `this.check(...)` call would throw once detached.
+  const check = async (key: string): Promise<RateLimitResult> =>
+    toResult(await store.hit(namespaced(key), windowMs));
+
   return {
     limit,
     windowMs,
-    async check(key) {
-      return toResult(await store.hit(namespaced(key), windowMs));
-    },
+    check,
     async checkRequest(request) {
-      return this.check(await keyFn(request));
+      return check(await keyFn(request));
     },
     async reset(key) {
       await store.reset(namespaced(key));
@@ -139,7 +142,7 @@ export function rateLimitHeaders(result: RateLimitResult): Record<string, string
   return headers;
 }
 
-/** The 429 every app in the fleet hand-wrote, with the headers attached. */
+/** The standard 429 body, with the rate-limit headers attached. */
 export function rateLimitExceededResponse(
   result: RateLimitResult,
   message = "Too many requests. Please try again later.",

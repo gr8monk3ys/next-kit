@@ -5,7 +5,6 @@ import {
   getStripe,
   resetStripeClient,
   isStripeConfigured,
-  getStripeMode,
   constructWebhookEvent,
   createCheckoutSession,
   createBillingPortalSession,
@@ -53,8 +52,13 @@ describe("getStripe", () => {
 
   it("accepts STRIPE_API_KEY as an alias, and strips wrapping quotes", () => {
     process.env.STRIPE_API_KEY = '"sk_test_quoted"';
-    expect(() => getStripe()).not.toThrow();
-    expect(getStripeMode()).toBe("test");
+    const quoted = getStripe();
+
+    // The cache key is built from the NORMALIZED secret, so a bare value and a
+    // quote-wrapped one resolve to the very same client — which is only true if
+    // the quotes were stripped before the key reached Stripe.
+    process.env.STRIPE_API_KEY = "sk_test_quoted";
+    expect(getStripe()).toBe(quoted);
   });
 });
 
@@ -67,13 +71,6 @@ describe("configuration reporting", () => {
     expect(isStripeConfigured()).toBe(true);
   });
 
-  it("getStripeMode reads the key prefix without revealing the key", () => {
-    expect(getStripeMode()).toBe("unknown");
-    process.env.STRIPE_SECRET_KEY = "sk_test_abc";
-    expect(getStripeMode()).toBe("test");
-    process.env.STRIPE_SECRET_KEY = "sk_live_abc";
-    expect(getStripeMode()).toBe("live");
-  });
 });
 
 describe("constructWebhookEvent", () => {

@@ -39,16 +39,70 @@ function readSecretKey(): string | undefined {
   return undefined;
 }
 
-let cached: Stripe | undefined;
-let cachedKey: string | undefined;
+/**
+ * Clients are memoized on the secret key **and** the resolved config, never on
+ * the key alone. Keying on the key alone means whoever calls first wins: touch
+ * the bare `stripe` proxy (no config) before calling `getStripe({ config })`
+ * and the pinned `apiVersion` is silently dropped, because the unconfigured
+ * client is already cached under that key.
+ */
+const clients = new Map<string, Stripe>();
+
+/**
+ * Stable identity for a config value. Objects and functions (`httpAgent`, a
+ * custom `httpClient`) get a per-reference id rather than being flattened to
+ * "[object]", so two different agents do not collide on one cache entry.
+ */
+let objectIdSeq = 0;
+const objectIds = new WeakMap<object, number>();
+
+function stableValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "object" || typeof value === "function") {
+    let id = objectIds.get(value as object);
+    if (id === undefined) {
+      id = (objectIdSeq += 1);
+      objectIds.set(value as object, id);
+    }
+    return `@${id}`;
+  }
+  return String(value);
+}
+
+function fingerprint(config: Stripe.StripeConfig): string {
+  return Object.entries(config)
+    .filter(([, value]) => value !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, value]) => `${name}=${stableValue(value)}`)
+    .join("&");
+}
+
+let defaultConfig: Stripe.StripeConfig | undefined;
+
+/**
+ * Set config applied to every client this module builds, including the ones
+ * behind the bare `stripe` proxy.
+ *
+ * This is how an app pins an `apiVersion` once and has it hold everywhere.
+ * Without it, `stripe.customers` and `getStripe({ config: { apiVersion } })`
+ * would each build their own client and only one of them would carry the pin.
+ * Call it at module scope, before anything touches the client.
+ */
+export function setDefaultStripeConfig(config?: Stripe.StripeConfig): void {
+  defaultConfig = config;
+  clients.clear();
+}
 
 export interface GetStripeOptions {
-  /** Passed straight through to the `Stripe` constructor. */
+  /**
+   * Passed to the `Stripe` constructor, merged over any default set with
+   * {@link setDefaultStripeConfig}.
+   */
   config?: Stripe.StripeConfig;
 }
 
 /**
- * The shared client, built on first call.
+ * The shared client, built on first call and memoized per (key, config).
  *
  * @throws if neither `STRIPE_SECRET_KEY` nor `STRIPE_API_KEY` is set.
  */
@@ -59,18 +113,28 @@ export function getStripe(options: GetStripeOptions = {}): Stripe {
       `Stripe is not configured: set one of ${SECRET_KEY_VARS.join(" or ")}.`,
     );
   }
-  // Rebuild if the key changed under us (tests swap process.env constantly).
-  if (!cached || cachedKey !== key) {
-    cached = new Stripe(key, { typescript: true, ...options.config });
-    cachedKey = key;
+
+  const config: Stripe.StripeConfig = {
+    typescript: true,
+    ...defaultConfig,
+    ...options.config,
+  };
+
+  // The key is part of the cache key, so a swapped secret (tests do this
+  // constantly) builds a new client rather than reusing a stale one.
+  const cacheKey = `${key}\u0000${fingerprint(config)}`;
+
+  let client = clients.get(cacheKey);
+  if (!client) {
+    client = new Stripe(key, config);
+    clients.set(cacheKey, client);
   }
-  return cached;
+  return client;
 }
 
-/** Drop the memoized client. For tests that swap `process.env`. */
+/** Drop every memoized client. For tests that swap `process.env`. */
 export function resetStripeClient(): void {
-  cached = undefined;
-  cachedKey = undefined;
+  clients.clear();
 }
 
 /**
@@ -96,25 +160,6 @@ export const stripe: Stripe = new Proxy({} as Stripe, {
 /** True when a secret key and a publishable key are both present. */
 export function isStripeConfigured(): boolean {
   return Boolean(readSecretKey() && process.env.STRIPE_PUBLISHABLE_KEY);
-}
-
-export type StripeMode = "test" | "live" | "unknown";
-
-/**
- * Which Stripe environment the configured keys point at.
- *
- * Safe to surface in admin tooling: it reads the key's prefix, never the key.
- */
-export function getStripeMode(): StripeMode {
-  const secret = readSecretKey() ?? "";
-  const publishable = process.env.STRIPE_PUBLISHABLE_KEY ?? "";
-  if (secret.startsWith("sk_test_") || publishable.startsWith("pk_test_")) {
-    return "test";
-  }
-  if (secret.startsWith("sk_live_") || publishable.startsWith("pk_live_")) {
-    return "live";
-  }
-  return "unknown";
 }
 
 export interface ConstructWebhookEventOptions {

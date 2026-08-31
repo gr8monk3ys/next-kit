@@ -196,14 +196,13 @@ function createRateLimiter(options) {
     }
     return result;
   };
+  const check = async (key) => toResult(await store.hit(namespaced(key), windowMs));
   return {
     limit,
     windowMs,
-    async check(key) {
-      return toResult(await store.hit(namespaced(key), windowMs));
-    },
+    check,
     async checkRequest(request) {
-      return this.check(await keyFn(request));
+      return check(await keyFn(request));
     },
     async reset(key) {
       await store.reset(namespaced(key));
