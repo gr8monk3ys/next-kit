@@ -1,0 +1,87 @@
+{
+  "name": "@gr8monk3ys/next-kit",
+  "version": "0.1.0",
+  "description": "Server-side building blocks for Next.js apps: fixed-window rate limiting with pluggable stores, a lazy Stripe client with webhook/checkout/portal helpers, and Clerk auth guards.",
+  "license": "MIT",
+  "author": "Lorenzo Scaturchio",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gr8monk3ys/next-kit.git"
+  },
+  "homepage": "https://github.com/gr8monk3ys/next-kit#readme",
+  "keywords": [
+    "nextjs",
+    "rate-limit",
+    "stripe",
+    "clerk",
+    "redis",
+    "typescript"
+  ],
+  "sideEffects": false,
+  "main": "dist/index.js",
+  "module": "src/index.ts",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./src/index.ts",
+      "require": "./dist/index.js"
+    },
+    "./rate-limit": {
+      "types": "./dist/rate-limit/index.d.ts",
+      "import": "./src/rate-limit/index.ts",
+      "require": "./dist/rate-limit/index.js"
+    },
+    "./stripe": {
+      "types": "./dist/stripe/index.d.ts",
+      "import": "./src/stripe/index.ts",
+      "require": "./dist/stripe/index.js"
+    },
+    "./auth/clerk": {
+      "types": "./dist/auth/clerk.d.ts",
+      "import": "./src/auth/clerk.ts",
+      "require": "./dist/auth/clerk.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run build"
+  },
+  "peerDependencies": {
+    "@clerk/nextjs": ">=6",
+    "next": ">=14",
+    "stripe": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "@clerk/nextjs": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    },
+    "stripe": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "stripe": "^22.6.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
