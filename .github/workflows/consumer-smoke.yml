@@ -181,12 +181,29 @@ jobs:
         working-directory: consumer
         run: bunx tsc --noEmit
 
-      # `next build` is deliberately NOT run: remedi's own CI never builds
-      # either (its jobs are test / e2e / readiness), so there is no proven
-      # secret-free build recipe to copy, and remedi's build script runs
-      # `prisma migrate deploy` against a live database plus Clerk/Stripe env.
-      # The unit suite and tsc already exercise every next-kit entry point
-      # remedi imports.
+      # remedi's own CI never runs a build (its jobs are test / e2e / readiness),
+      # so this recipe was measured rather than copied: it completes in ~26s
+      # (Next 16 / Turbopack, 53/53 static pages) on a runner with no secrets.
+      # Worth keeping -- next-kit is a *Next.js* kit, so bundling and the
+      # server/client boundary are exactly what a unit test cannot check.
+      # The values below are non-functional placeholders, the same ones
+      # remedi's `readiness` job uses. The Clerk key must merely be
+      # format-valid: it is parsed at build time, and it base64-decodes to
+      # `example.clerk.accounts.dev$`. Nothing here is a secret.
+      - name: Consumer next build
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+          CLERK_SECRET_KEY: sk_test_ci
+          STRIPE_SECRET_KEY: sk_test_ci
+          STRIPE_PUBLISHABLE_KEY: pk_test_ci
+          STRIPE_WEBHOOK_SECRET: whsec_ci
+          STRIPE_BASIC_MONTHLY_PRICE_ID: price_basic_monthly
+          STRIPE_BASIC_YEARLY_PRICE_ID: price_basic_yearly
+          STRIPE_PREMIUM_MONTHLY_PRICE_ID: price_premium_monthly
+          STRIPE_PREMIUM_YEARLY_PRICE_ID: price_premium_yearly
+        run: bun run build
 
       - name: Summary
         if: always()
