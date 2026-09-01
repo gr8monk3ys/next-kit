@@ -1,0 +1,202 @@
+name: Consumer smoke
+
+# Why this workflow exists
+# ------------------------
+# next-kit ships as a pinned GitHub tarball, e.g.
+#   "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.1.tar.gz"
+# so a breaking change here is invisible until some consumer re-installs. Most
+# consumers in this fleet are private repos whose Actions minutes are exhausted,
+# so their own CI cannot be relied on to notice. next-kit is public and its
+# minutes are free, so the package proves itself against a real consumer here:
+# build dist/ from the source under review, install THAT over the consumer's
+# pinned tarball, and run the consumer's own suite.
+#
+# Consumers
+#   * gr8monk3ys/remedi -- public, Bun + vitest. Adoption currently lives on
+#     PR #80 (branch w5/next-kit-adoption); main does not declare the dependency
+#     yet, so on main this job SKIPS with a notice instead of going red. Use
+#     `workflow_dispatch` with consumer_ref=w5/next-kit-adoption to smoke the
+#     adoption branch before it merges.
+#   * gr8monk3ys/InfiniStar -- also adopts next-kit, but the repo is PRIVATE.
+#     Checking it out would need a PAT, and this workflow deliberately uses no
+#     secrets (a fork PR must be able to run it), so InfiniStar is skipped by
+#     design. It is covered by its own CI when its Actions quota allows.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      consumer_ref:
+        description: "Consumer branch/tag/SHA to smoke against (default: the consumer's default branch)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  remedi:
+    name: remedi (bun + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Mirrors gr8monk3ys/remedi's own .github/workflows/ci.yml `test` job: its
+    # suite runs against a real Postgres with migrations + seed applied.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: remedi
+          POSTGRES_PASSWORD: remedi_dev
+          POSTGRES_DB: remedi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U remedi -d remedi"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      CONSUMER_REPO: gr8monk3ys/remedi
+      CONSUMER_REF: ${{ inputs.consumer_ref || 'main' }}
+      # Same values remedi's own CI uses. None of these are secrets.
+      DATABASE_URL: postgresql://remedi:remedi_dev@localhost:5432/remedi?schema=public
+      AUTH_SECRET: ci-auth-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+    steps:
+      - name: Checkout next-kit (the package under test)
+        uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # remedi declares "packageManager": "bun@1.3.8". Pinning the same Bun
+          # for both halves keeps a consumer failure attributable to next-kit
+          # rather than to package-manager drift.
+          bun-version: 1.3.8
+
+      - name: Install next-kit dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build dist/ from source
+        run: bun run build
+
+      - name: Assert the committed dist/ is what src/ builds
+        # Consumers install the COMMITTED dist/ (the tarball is the repo tree),
+        # while the steps below smoke the freshly built one. If those two ever
+        # differ, the smoke is green for code no consumer actually runs.
+        run: |
+          if ! git diff --exit-code -- dist; then
+            echo "::error::committed dist/ does not match a fresh build of src/ -- consumers install the committed dist/, so this must be regenerated (bun run build) and committed"
+            exit 1
+          fi
+          echo "committed dist/ == fresh build of src/"
+
+      - name: Pack the package under test
+        id: pack
+        run: |
+          set -euo pipefail
+          # Stamp package.json so the consumer side can PROVE it resolved this
+          # build and not the pinned tarball. `bun add <file:...>` copies the
+          # package into node_modules rather than symlinking it, so a realpath
+          # check alone cannot tell the two apart.
+          STAMP="consumer-smoke-${GITHUB_RUN_ID}-${GITHUB_SHA}"
+          bun pm pkg set consumerSmokeStamp="$STAMP" > /dev/null
+          # A packed tarball (not `file:` on the directory) is what a consumer
+          # really installs: it honours package.json `files`, and it does not
+          # drag next-kit's own devDependencies (vitest, tsup, stripe, esbuild)
+          # into the consumer's node_modules where they could shadow its own.
+          bun pm pack --filename "$RUNNER_TEMP/next-kit-under-test.tgz" --quiet
+          echo "stamp=$STAMP" >> "$GITHUB_OUTPUT"
+          echo "tgz=$RUNNER_TEMP/next-kit-under-test.tgz" >> "$GITHUB_OUTPUT"
+          ls -l "$RUNNER_TEMP/next-kit-under-test.tgz"
+
+      - name: Checkout consumer (${{ env.CONSUMER_REPO }})
+        uses: actions/checkout@v4
+        with:
+          repository: gr8monk3ys/remedi
+          ref: ${{ inputs.consumer_ref || 'main' }}
+          path: consumer
+
+      - name: Does the consumer declare @gr8monk3ys/next-kit?
+        id: guard
+        run: |
+          set -euo pipefail
+          if node -e 'const p=require("./consumer/package.json");const n="@gr8monk3ys/next-kit";const v=(p.dependencies||{})[n]||(p.devDependencies||{})[n];if(!v)process.exit(1);console.log("pinned as: "+v)'; then
+            echo "declared=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "declared=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$CONSUMER_REPO@$CONSUMER_REF does not declare @gr8monk3ys/next-kit yet -- nothing to smoke, skipped. Adoption is on remedi PR #80 (branch w5/next-kit-adoption); re-run this workflow via workflow_dispatch with consumer_ref=w5/next-kit-adoption to smoke it before it merges."
+          fi
+
+      - name: Install consumer deps with next-kit overridden to this build
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        run: bun add "@gr8monk3ys/next-kit@file:${{ steps.pack.outputs.tgz }}"
+
+      - name: Assert the consumer resolved THIS build, not the pinned tarball
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        env:
+          EXPECTED_STAMP: ${{ steps.pack.outputs.stamp }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const dir = "node_modules/@gr8monk3ys/next-kit";
+            const pkg = JSON.parse(fs.readFileSync(dir + "/package.json", "utf8"));
+            console.log("resolved realpath : " + fs.realpathSync(dir));
+            console.log("version           : " + pkg.version);
+            console.log("provenance stamp  : " + pkg.consumerSmokeStamp);
+            if (pkg.consumerSmokeStamp !== process.env.EXPECTED_STAMP) {
+              console.error("::error::consumer resolved a different copy of @gr8monk3ys/next-kit (expected stamp " + process.env.EXPECTED_STAMP + ") -- the override did not take, so this smoke would be testing the pinned tarball");
+              process.exit(1);
+            }
+            console.log("OK: consumer is running the package built from this ref");
+          '
+
+      - name: Prisma generate
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        run: bunx prisma generate
+
+      - name: Migrate + seed
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        run: bunx prisma migrate dev && bunx prisma db seed
+
+      - name: Consumer unit tests
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        run: bun run test:run
+
+      - name: Consumer typecheck
+        if: steps.guard.outputs.declared == 'true'
+        working-directory: consumer
+        run: bunx tsc --noEmit
+
+      # `next build` is deliberately NOT run: remedi's own CI never builds
+      # either (its jobs are test / e2e / readiness), so there is no proven
+      # secret-free build recipe to copy, and remedi's build script runs
+      # `prisma migrate deploy` against a live database plus Clerk/Stripe env.
+      # The unit suite and tsc already exercise every next-kit entry point
+      # remedi imports.
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Consumer smoke: $CONSUMER_REPO@$CONSUMER_REF"
+            if [ "${{ steps.guard.outputs.declared }}" = "true" ]; then
+              echo "- next-kit override: \`${{ steps.pack.outputs.stamp }}\`"
+              echo "- result: ${{ job.status }}"
+            else
+              echo "- skipped: consumer does not declare \`@gr8monk3ys/next-kit\` on this ref"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
