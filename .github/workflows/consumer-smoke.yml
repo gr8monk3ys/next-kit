@@ -11,16 +11,17 @@ name: Consumer smoke
 # build dist/ from the source under review, install THAT over the consumer's
 # pinned tarball, and run the consumer's own suite.
 #
-# Consumers
-#   * gr8monk3ys/remedi -- public, Bun + vitest. Adoption currently lives on
-#     PR #80 (branch w5/next-kit-adoption); main does not declare the dependency
-#     yet, so on main this job SKIPS with a notice instead of going red. Use
-#     `workflow_dispatch` with consumer_ref=w5/next-kit-adoption to smoke the
-#     adoption branch before it merges.
-#   * gr8monk3ys/InfiniStar -- also adopts next-kit, but the repo is PRIVATE.
-#     Checking it out would need a PAT, and this workflow deliberately uses no
-#     secrets (a fork PR must be able to run it), so InfiniStar is skipped by
-#     design. It is covered by its own CI when its Actions quota allows.
+# Consumer
+#   gr8monk3ys/remedi -- public, Bun + vitest. Adoption currently lives on
+#   PR #80 (branch w5/next-kit-adoption); main does not declare the dependency
+#   yet, so on main this job SKIPS with a notice instead of going red. Use
+#   `workflow_dispatch` with consumer_ref=w5/next-kit-adoption to smoke the
+#   adoption branch before it merges.
+#
+# One other consumer is private and is deliberately not smoked here:
+# `actions/checkout` cannot read a private repo with the default GITHUB_TOKEN,
+# and a cross-repo PAT does not belong in a public repo's workflow. Only public
+# consumers are listed above.
 
 on:
   pull_request:
@@ -37,12 +38,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # The consumer ref is part of the identity of a run: a dispatch against the
+  # adoption branch must not cancel (or be cancelled by) the run against main.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.consumer_ref || 'default' }}
+  cancel-in-progress: true
 
 jobs:
   remedi:
-    name: remedi (bun + vitest)
+    # Dynamic so the checks list distinguishes a dispatch against the adoption
+    # branch from an ordinary run against the consumer's default branch.
+    # No matrix here, unlike the Python packages: every step below -- the
+    # Postgres service, prisma generate/migrate/seed, next build -- is shaped
+    # by this one consumer, so a second consumer would need its own job rather
+    # than a matrix row.
+    name: gr8monk3ys/remedi@${{ inputs.consumer_ref || 'main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
