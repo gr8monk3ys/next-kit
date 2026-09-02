@@ -94,17 +94,62 @@ declare class RedisStore implements RateLimitStore {
  * Deriving a rate-limit bucket key from an inbound request.
  *
  * The whole point is that a client must not be able to choose its own bucket.
- * `x-forwarded-for` is a list that proxies APPEND to, so its left-most entry is
- * whatever the caller invented and its right-most entry is the hop your own edge
- * added. Reading `[0]` — the obvious thing — lets anyone mint a fresh bucket per
- * request just by rotating a header.
+ * Two ways to get that wrong, and this module exists to avoid both:
+ *
+ * 1. `x-forwarded-for` is a list that proxies APPEND to, so its left-most entry
+ *    is whatever the caller invented and its right-most entry is the hop your
+ *    own edge added. Reading `[0]` — the obvious thing — lets anyone mint a
+ *    fresh bucket per request just by rotating a header.
+ *
+ * 2. A *platform* header is only trustworthy on the platform that sets it.
+ *    `cf-connecting-ip` is written (and any inbound copy overwritten) by
+ *    Cloudflare — but an app deployed straight onto Vercel, Fly, Render or a
+ *    bare Node server has nothing that strips it, so the client sends whatever
+ *    it likes and mints a fresh bucket per request. Same for
+ *    `x-vercel-forwarded-for` off Vercel. That is why trust here is
+ *    **declared, not assumed**: nothing platform-specific is read unless the
+ *    caller names the platform (or lists the headers) it actually runs behind.
  */
+/**
+ * Headers a platform sets itself and overwrites on every request — but only
+ * on that platform. Read only when the caller declares it.
+ */
+declare const PLATFORM_HEADERS: {
+    readonly vercel: readonly ["x-vercel-forwarded-for"];
+    readonly cloudflare: readonly ["cf-connecting-ip"];
+    readonly generic: readonly [];
+};
 /**
  * Strip the wrappers a proxy may add (`for=`, quotes, `[v6]`, `:port`) and
  * return the address only if it actually parses as one.
  */
 declare function normalizeIpCandidate(value: string): string | null;
+/** Where the app is deployed, which is what decides who wrote a header. */
+type ClientIdPlatform = keyof typeof PLATFORM_HEADERS;
 interface GetClientIdOptions {
+    /**
+     * The platform this app is deployed on, which is the only thing that makes
+     * that platform's header trustworthy.
+     *
+     * - `"cloudflare"` — prepends `cf-connecting-ip`. Correct **only** behind
+     *   Cloudflare, which overwrites any inbound copy of it.
+     * - `"vercel"` — prepends `x-vercel-forwarded-for`, which Vercel strips from
+     *   client input and rewrites.
+     * - `"generic"` (default) — no platform header at all: `x-real-ip`, then the
+     *   right-most `x-forwarded-for` entry.
+     *
+     * Declaring the wrong platform is a rate-limit bypass: a header your edge
+     * does not overwrite is a header the caller controls.
+     */
+    platform?: ClientIdPlatform;
+    /**
+     * Single-value headers to read first, most trustworthy first. Replaces the
+     * platform + default list entirely, for edges this package does not know
+     * about (`true-client-ip` on Akamai, `fastly-client-ip`, your own
+     * `x-edge-client-ip`). Only list headers your own infrastructure
+     * *overwrites*; anything else is caller-supplied.
+     */
+    trustedHeaders?: string[];
     /**
      * Cookie names to fall back to when no trustworthy IP is available, so
      * unidentified callers get their own bucket instead of sharing one global
@@ -119,6 +164,17 @@ interface GetClientIdOptions {
 }
 /**
  * Best available client identifier, most trustworthy source first.
+ *
+ * Reads, in order: the trusted single-value headers (`x-real-ip` only, unless
+ * you declare a `platform` or your own `trustedHeaders`), then the
+ * **right-most** `x-forwarded-for` entry, then an optional session cookie,
+ * then a UA fingerprint.
+ *
+ * ```ts
+ * getClientId(request);                            // Vercel / Fly / nginx
+ * getClientId(request, { platform: "cloudflare" }); // behind Cloudflare
+ * getClientId(request, { trustedHeaders: ["true-client-ip"] }); // Akamai
+ * ```
  *
  * Works with any `Request` — a `NextRequest` is one.
  */
@@ -211,4 +267,4 @@ declare function withRateLimit<Args extends unknown[]>(handler: Handler<Args>, o
     limiter: RateLimiter;
 } & Partial<WithRateLimitOptions>): Handler<Args>;
 
-export { type GetClientIdOptions, MemoryStore, type RateLimitResult, type RateLimitStore, type RateLimiter, type RateLimiterOptions, type RedisLike, RedisStore, type RedisStoreOptions, type StoreHit, type WithRateLimitOptions, addRateLimitHeaders, createRateLimiter, getClientId, normalizeIpCandidate, rateLimitExceededResponse, rateLimitHeaders, withRateLimit };
+export { type ClientIdPlatform, type GetClientIdOptions, MemoryStore, type RateLimitResult, type RateLimitStore, type RateLimiter, type RateLimiterOptions, type RedisLike, RedisStore, type RedisStoreOptions, type StoreHit, type WithRateLimitOptions, addRateLimitHeaders, createRateLimiter, getClientId, normalizeIpCandidate, rateLimitExceededResponse, rateLimitHeaders, withRateLimit };

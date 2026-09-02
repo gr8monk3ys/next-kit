@@ -1,6 +1,6 @@
 {
   "name": "@gr8monk3ys/next-kit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Server-side building blocks for Next.js apps: fixed-window rate limiting with pluggable stores, a lazy Stripe client with webhook/checkout/portal helpers, and Clerk auth guards.",
   "license": "MIT",
   "author": "Lorenzo Scaturchio",

@@ -86,14 +86,12 @@ var RedisStore = class {
 };
 
 // src/rate-limit/client-id.ts
-var TRUSTED_SINGLE_VALUE_HEADERS = [
-  "x-vercel-forwarded-for",
-  // Vercel
-  "cf-connecting-ip",
-  // Cloudflare
-  "x-real-ip"
-  // nginx / Vercel
-];
+var PLATFORM_HEADERS = {
+  vercel: ["x-vercel-forwarded-for"],
+  cloudflare: ["cf-connecting-ip"],
+  generic: []
+};
+var DEFAULT_TRUSTED_HEADERS = ["x-real-ip"];
 function isValidIpv4(value) {
   if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) return false;
   return value.split(".").every((segment) => {
@@ -135,8 +133,15 @@ function readCookie(request, name) {
   }
   return null;
 }
+function trustedHeadersFor(options) {
+  if (options.trustedHeaders) return options.trustedHeaders;
+  return [
+    ...PLATFORM_HEADERS[options.platform ?? "generic"],
+    ...DEFAULT_TRUSTED_HEADERS
+  ];
+}
 function getClientId(request, options = {}) {
-  for (const header of TRUSTED_SINGLE_VALUE_HEADERS) {
+  for (const header of trustedHeadersFor(options)) {
     const value = request.headers.get(header);
     if (!value) continue;
     const ip = normalizeIpCandidate(value.split(",")[0] ?? value);

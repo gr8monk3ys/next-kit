@@ -16,7 +16,7 @@ The package is distributed as a GitHub release tarball, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.1.tar.gz"
+    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.2.tar.gz"
   }
 }
 ```
@@ -124,16 +124,42 @@ so its left-most entry is whatever the caller invented and its right-most entry
 is the hop your own edge added. Reading `[0]` lets anyone mint a fresh
 rate-limit bucket per request just by rotating a header.
 
-The order is: platform-set single-value headers first
-(`x-vercel-forwarded-for`, `cf-connecting-ip`, `x-real-ip`), then the
-**right-most** `x-forwarded-for` entry, then an optional session cookie, then a
-UA fingerprint — so that unidentified callers get their own bucket instead of
-sharing one global `"anonymous"` bucket a single client could exhaust for
-everyone.
+The order is: the trusted single-value headers (below), then the **right-most**
+`x-forwarded-for` entry, then an optional session cookie, then a UA fingerprint
+— so that unidentified callers get their own bucket instead of sharing one
+global `"anonymous"` bucket a single client could exhaust for everyone.
 
 ```ts
 getClientId(request, { sessionCookieNames: ["__session"] });
+getClientId(request, { platform: "cloudflare" });
+getClientId(request, { trustedHeaders: ["true-client-ip"] }); // Akamai
 ```
+
+#### Which headers can you trust, where
+
+A header is only trustworthy if **your own edge overwrites it** on every
+request. Nothing else does: any header your infrastructure merely passes
+through is a value the caller chose.
+
+| header | who writes it | trusted by `getClientId` |
+|---|---|---|
+| `x-real-ip` | your reverse proxy (nginx, Vercel, Fly, Render) | **always** |
+| right-most `x-forwarded-for` | the last hop that appended — your edge | **always** |
+| left-most `x-forwarded-for` | the caller | never |
+| `cf-connecting-ip` | Cloudflare — **only** behind Cloudflare | only with `platform: "cloudflare"` |
+| `x-vercel-forwarded-for` | Vercel — **only** on Vercel | only with `platform: "vercel"` |
+| `true-client-ip`, `fastly-client-ip`, … | that CDN, on that CDN | only via `trustedHeaders` |
+
+So the default (`platform: "generic"`) reads **no** platform header at all.
+Trusting `cf-connecting-ip` off Cloudflare is a rate-limit bypass, not a
+convenience: on Vercel — or on any host without Cloudflare in front — nothing
+strips an inbound `cf-connecting-ip`, so a client sends a new one per request
+and never shares a bucket with itself. The same is true of
+`x-vercel-forwarded-for` anywhere but Vercel.
+
+`platform` *prepends* that platform's header to the default list;
+`trustedHeaders` *replaces* the list outright, for an edge this package does
+not know about. Declare the platform you actually deploy on, and nothing else.
 
 ## `@gr8monk3ys/next-kit/stripe`
 
