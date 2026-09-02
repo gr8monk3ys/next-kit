@@ -271,15 +271,88 @@ describe("RedisStore", () => {
 });
 
 describe("getClientId", () => {
-  it("prefers platform headers over x-forwarded-for", () => {
+  it("prefers a DECLARED platform header over x-forwarded-for", () => {
     expect(
       getClientId(
         request({ "x-vercel-forwarded-for": "1.1.1.1", "x-forwarded-for": "9.9.9.9" }),
+        { platform: "vercel" },
       ),
     ).toBe("1.1.1.1");
     expect(
-      getClientId({ headers: new Headers({ "cf-connecting-ip": "2.2.2.2" }) } as Request),
+      getClientId(request({ "cf-connecting-ip": "2.2.2.2" }), {
+        platform: "cloudflare",
+      }),
     ).toBe("2.2.2.2");
+  });
+
+  it("prefers x-real-ip over x-forwarded-for with no platform declared", () => {
+    expect(
+      getClientId(request({ "x-real-ip": "5.5.5.5", "x-forwarded-for": "9.9.9.9" })),
+    ).toBe("5.5.5.5");
+  });
+
+  // The bug this default exists to prevent: off Cloudflare, nothing strips an
+  // inbound cf-connecting-ip, so trusting it by default hands every caller a
+  // fresh rate-limit bucket per request.
+  it("does NOT trust cf-connecting-ip by default", () => {
+    const honest = request({ "x-forwarded-for": "9.9.9.9" });
+    const spoofed = request({
+      "cf-connecting-ip": "6.6.6.6",
+      "x-forwarded-for": "9.9.9.9",
+    });
+    const spoofedAgain = request({
+      "cf-connecting-ip": "7.7.7.7",
+      "x-forwarded-for": "9.9.9.9",
+    });
+
+    expect(getClientId(honest)).toBe("9.9.9.9");
+    expect(getClientId(spoofed)).toBe("9.9.9.9");
+    expect(getClientId(spoofedAgain)).toBe("9.9.9.9");
+  });
+
+  it("does NOT trust x-vercel-forwarded-for unless vercel is declared", () => {
+    const req = request({
+      "x-vercel-forwarded-for": "6.6.6.6",
+      "x-real-ip": "5.5.5.5",
+    });
+    expect(getClientId(req)).toBe("5.5.5.5");
+    expect(getClientId(req, { platform: "generic" })).toBe("5.5.5.5");
+    expect(getClientId(req, { platform: "vercel" })).toBe("6.6.6.6");
+  });
+
+  it("a lone spoofed cf-connecting-ip does not mint a bucket by default", () => {
+    // No trustworthy source at all -> the fingerprint/anonymous fallback,
+    // which the attacker cannot rotate per request by changing one header.
+    expect(getClientId(request({ "cf-connecting-ip": "6.6.6.6" }))).toBe(
+      getClientId(request({ "cf-connecting-ip": "7.7.7.7" })),
+    );
+    expect(
+      getClientId(request({ "cf-connecting-ip": "6.6.6.6" }), {
+        fallback: "anonymous",
+      }),
+    ).toBe("anonymous");
+  });
+
+  it("trustedHeaders replaces the platform + default list entirely", () => {
+    const req = request({
+      "true-client-ip": "8.8.8.8",
+      "x-real-ip": "5.5.5.5",
+      "cf-connecting-ip": "6.6.6.6",
+    });
+    expect(getClientId(req, { trustedHeaders: ["true-client-ip"] })).toBe("8.8.8.8");
+    // x-real-ip is NOT appended for free: an explicit list is the whole list.
+    expect(
+      getClientId(request({ "x-real-ip": "5.5.5.5", "x-forwarded-for": "9.9.9.9" }), {
+        trustedHeaders: ["true-client-ip"],
+      }),
+    ).toBe("9.9.9.9");
+    // ...and declaring cloudflare does not re-admit cf-connecting-ip here.
+    expect(
+      getClientId(req, {
+        platform: "cloudflare",
+        trustedHeaders: ["true-client-ip"],
+      }),
+    ).toBe("8.8.8.8");
   });
 
   it("takes the RIGHT-most x-forwarded-for entry, not the client-supplied left", () => {

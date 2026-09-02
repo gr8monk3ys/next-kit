@@ -13,7 +13,11 @@ import {
   type RedisStoreOptions,
   type StoreHit,
 } from "./store";
-import { getClientId, type GetClientIdOptions } from "./client-id";
+import {
+  getClientId,
+  type ClientIdPlatform,
+  type GetClientIdOptions,
+} from "./client-id";
 
 export { MemoryStore, RedisStore } from "./store";
 export { getClientId, normalizeIpCandidate } from "./client-id";
@@ -238,5 +242,6 @@ export type {
   StoreHit,
   RedisLike,
   RedisStoreOptions,
+  ClientIdPlatform,
   GetClientIdOptions,
 };
