@@ -89,6 +89,77 @@ declare class RedisStore implements RateLimitStore {
     /** No-op: Redis expires the keys itself. */
     cleanup(): void;
 }
+/**
+ * Runs one parameterized statement (`$1`, `$2`, …) and resolves to its rows.
+ *
+ * A function rather than a client shape, because no two Postgres clients agree
+ * on one. Each is a one-line adapter:
+ *
+ * ```ts
+ * // pg / @vercel/postgres
+ * (text, params) => pool.query(text, params).then((r) => r.rows)
+ * // @neondatabase/serverless
+ * (text, params) => sql.query(text, params)
+ * // Prisma
+ * (text, params) => prisma.$queryRawUnsafe(text, ...params)
+ * // postgres.js
+ * (text, params) => sql.unsafe(text, params)
+ * ```
+ */
+type PostgresQuery = (text: string, params: unknown[]) => Promise<Record<string, unknown>[]>;
+interface PostgresStoreOptions {
+    /**
+     * Table holding the counters, optionally schema-qualified. Default
+     * `"rate_limits"`. Create it with {@link postgresStoreSchema}.
+     */
+    table?: string;
+    /**
+     * What to do when the query throws. `"open"` (default) lets the request
+     * through, as `RedisStore` does. `"closed"` rejects it.
+     */
+    onError?: "open" | "closed";
+    /** Called with the error whenever a query fails. */
+    onErrorLog?: (error: unknown) => void;
+    /**
+     * Milliseconds between opportunistic sweeps of expired rows, run from `hit`.
+     * Default 5 minutes; `0` disables them, for apps that call `cleanup()` from a
+     * cron instead.
+     */
+    cleanupIntervalMs?: number;
+}
+/**
+ * DDL for the table {@link PostgresStore} expects. Run it once, or copy it into
+ * your migrations — an app on Prisma or Drizzle should declare the table in its
+ * schema instead, or the next migration will see it as drift (see the README).
+ */
+declare function postgresStoreSchema(table?: string): string;
+/**
+ * Distributed fixed-window counter in one Postgres row per key.
+ *
+ * For apps that already have Postgres and would otherwise run Redis only to
+ * share rate-limit counters between instances.
+ *
+ * Each `hit` is a single upsert, so it is atomic without a transaction and
+ * works over HTTP drivers such as Neon's. The window is measured on the
+ * database clock, so every instance agrees on when it ends.
+ *
+ * Rows do not expire on their own: an expired row is reused by the next hit on
+ * its key, and the rest are deleted by `cleanup()`. The `key` column holds the
+ * SHA-256 of the key, not the key itself.
+ */
+declare class PostgresStore implements RateLimitStore {
+    private readonly query;
+    private readonly table;
+    private readonly onError;
+    private readonly onErrorLog?;
+    private readonly cleanupIntervalMs;
+    private lastCleanup;
+    constructor(query: PostgresQuery, options?: PostgresStoreOptions);
+    hit(key: string, windowMs: number): Promise<StoreHit>;
+    reset(key: string): Promise<void>;
+    cleanup(): Promise<void>;
+    private maybeCleanup;
+}
 
 /**
  * Deriving a rate-limit bucket key from an inbound request.
@@ -267,4 +338,4 @@ declare function withRateLimit<Args extends unknown[]>(handler: Handler<Args>, o
     limiter: RateLimiter;
 } & Partial<WithRateLimitOptions>): Handler<Args>;
 
-export { type ClientIdPlatform, type GetClientIdOptions, MemoryStore, type RateLimitResult, type RateLimitStore, type RateLimiter, type RateLimiterOptions, type RedisLike, RedisStore, type RedisStoreOptions, type StoreHit, type WithRateLimitOptions, addRateLimitHeaders, createRateLimiter, getClientId, normalizeIpCandidate, rateLimitExceededResponse, rateLimitHeaders, withRateLimit };
+export { type ClientIdPlatform, type GetClientIdOptions, MemoryStore, type PostgresQuery, PostgresStore, type PostgresStoreOptions, type RateLimitResult, type RateLimitStore, type RateLimiter, type RateLimiterOptions, type RedisLike, RedisStore, type RedisStoreOptions, type StoreHit, type WithRateLimitOptions, addRateLimitHeaders, createRateLimiter, getClientId, normalizeIpCandidate, postgresStoreSchema, rateLimitExceededResponse, rateLimitHeaders, withRateLimit };

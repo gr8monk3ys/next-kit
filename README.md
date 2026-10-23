@@ -16,7 +16,7 @@ The package is distributed as a GitHub release tarball, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.2.tar.gz"
+    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.2.0.tar.gz"
   }
 }
 ```
@@ -96,6 +96,83 @@ const limiter = createRateLimiter({
 `RedisStore` fails **open** by default: a Redis outage must not turn every
 request into a 500. Pass `onError: "closed"` to invert that.
 
+`PostgresStore` keeps the counters in a Postgres table, for apps that already
+have a database and would otherwise run Redis only to share them between
+instances. It takes a function that runs one parameterized query and returns
+the rows, so any client works through a one-line adapter:
+
+```ts
+import { neon } from "@neondatabase/serverless";
+import { createRateLimiter, PostgresStore } from "@gr8monk3ys/next-kit/rate-limit";
+
+const sql = neon(process.env.DATABASE_URL!);
+
+const limiter = createRateLimiter({
+  store: new PostgresStore((text, params) => sql.query(text, params), {
+    onErrorLog: console.error,
+  }),
+  limit: 30,
+  windowMs: 60_000,
+});
+
+// pg:         (text, params) => pool.query(text, params).then((r) => r.rows)
+// Prisma:     (text, params) => prisma.$queryRawUnsafe(text, ...params)
+// postgres.js:(text, params) => sql.unsafe(text, params)
+```
+
+Each hit is one `INSERT … ON CONFLICT DO UPDATE`, so it is atomic without a
+transaction and works over HTTP drivers. Windows are timed on the database
+clock, so instances with drifting clocks still agree. It fails open by default,
+like `RedisStore`, and costs one write per checked request — fine for the
+traffic these apps see, and a reason to keep IP-level abuse at the edge
+(Vercel Firewall, Cloudflare) on a busy one.
+
+The table is yours to create. `postgresStoreSchema(table?)` returns the DDL:
+
+```sql
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key text PRIMARY KEY,
+  count integer NOT NULL,
+  reset_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rate_limits_reset_at_idx ON rate_limits (reset_at);
+```
+
+On Prisma or Drizzle, declare it in the schema instead, or the next migration
+will treat the table as drift:
+
+```prisma
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime @map("reset_at") @db.Timestamptz(3)
+
+  @@index([resetAt])
+  @@map("rate_limits")
+}
+```
+
+```ts
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    key: text("key").primaryKey(),
+    count: integer("count").notNull(),
+    resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("rate_limits_reset_at_idx").on(t.resetAt)],
+);
+```
+
+The `key` column holds a SHA-256 of the bucket key, not the key itself. Raw
+request-derived text can make the upsert throw (Postgres `text` rejects NUL
+bytes, and the index rejects very long entries), and a store that fails open
+would turn that into a way around the limit.
+
+Rows do not expire on their own. A key's expired row is reused by its next hit,
+and `hit` deletes the rest every `cleanupIntervalMs` (default 5 minutes, `0` to
+turn it off and call `limiter.cleanup()` from a cron instead).
+
 ### Fixed window, not sliding
 
 The stores implement a **fixed window**: the first request starts a window of
@@ -108,8 +185,8 @@ The other two kept a list of request timestamps and pruned it on every call,
 which is a sliding window; both paid for it in memory proportional to the
 traffic they were trying to limit.
 
-Both stores use it, so a limiter enforces the same thing whether or not Redis
-is configured — which was not true of the code this replaced.
+All three stores use it, so a limiter enforces the same thing whichever backs
+it — which was not true of the code this replaced.
 
 A fixed window admits, worst case, up to `2 × limit` requests across a window
 boundary. If that matters more to you than the cost, keep a sliding window

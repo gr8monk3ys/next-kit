@@ -16,6 +16,18 @@ jobs:
   check:
     name: Test & typecheck
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +46,13 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: PostgresStore against a real server
+        # PGlite covers the SQL; only a real server with a connection pool can
+        # race many upserts on one key.
+        run: bunx vitest run src/__tests__/postgres-store.test.ts
+        env:
+          NEXT_KIT_PG_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       - name: Fail if dist/ is out of date
         # dist/ is committed because the tarball install resolves `require`
