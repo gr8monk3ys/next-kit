@@ -16,7 +16,7 @@ The package is distributed as a GitHub release tarball, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.1.2.tar.gz"
+    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.2.0.tar.gz"
   }
 }
 ```
