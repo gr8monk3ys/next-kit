@@ -11,6 +11,8 @@ import {
   type RateLimitStore,
   type RedisLike,
   type RedisStoreOptions,
+  type PostgresQuery,
+  type PostgresStoreOptions,
   type StoreHit,
 } from "./store";
 import {
@@ -19,7 +21,7 @@ import {
   type GetClientIdOptions,
 } from "./client-id";
 
-export { MemoryStore, RedisStore } from "./store";
+export { MemoryStore, RedisStore, PostgresStore, postgresStoreSchema } from "./store";
 export { getClientId, normalizeIpCandidate } from "./client-id";
 
 export interface RateLimitResult {
@@ -242,6 +244,8 @@ export type {
   StoreHit,
   RedisLike,
   RedisStoreOptions,
+  PostgresQuery,
+  PostgresStoreOptions,
   ClientIdPlatform,
   GetClientIdOptions,
 };

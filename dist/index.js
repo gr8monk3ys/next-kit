@@ -84,6 +84,84 @@ var RedisStore = class {
   cleanup() {
   }
 };
+var IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
+function assertTable(table) {
+  if (!IDENTIFIER.test(table)) {
+    throw new Error(`Invalid rate-limit table name: ${JSON.stringify(table)}`);
+  }
+  return table;
+}
+function postgresStoreSchema(table = "rate_limits") {
+  const name = assertTable(table);
+  const index = `${name.replace(".", "_")}_reset_at_idx`;
+  return [
+    `CREATE TABLE IF NOT EXISTS ${name} (`,
+    `  key text PRIMARY KEY,`,
+    `  count integer NOT NULL,`,
+    `  reset_at timestamptz NOT NULL`,
+    `);`,
+    `CREATE INDEX IF NOT EXISTS ${index} ON ${name} (reset_at);`
+  ].join("\n");
+}
+var PostgresStore = class {
+  constructor(query, options = {}) {
+    this.query = query;
+    this.table = assertTable(options.table ?? "rate_limits");
+    this.onError = options.onError ?? "open";
+    this.onErrorLog = options.onErrorLog;
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? 5 * 6e4;
+  }
+  query;
+  table;
+  onError;
+  onErrorLog;
+  cleanupIntervalMs;
+  lastCleanup = Date.now();
+  async hit(key, windowMs) {
+    await this.maybeCleanup();
+    const t = this.table;
+    const text = `
+      INSERT INTO ${t} AS r (key, count, reset_at)
+      VALUES ($1::text, 1, now() + $2::float8 * interval '1 millisecond')
+      ON CONFLICT (key) DO UPDATE SET
+        count = CASE WHEN r.reset_at <= now() THEN 1 ELSE r.count + 1 END,
+        reset_at = CASE WHEN r.reset_at <= now() THEN EXCLUDED.reset_at ELSE r.reset_at END
+      RETURNING count, (extract(epoch FROM reset_at) * 1000)::float8 AS reset_at_ms`;
+    try {
+      const [row] = await this.query(text, [key, windowMs]);
+      if (!row) throw new Error("Rate-limit upsert returned no row");
+      return {
+        count: Number(row.count),
+        resetAt: Math.round(Number(row.reset_at_ms))
+      };
+    } catch (error) {
+      this.onErrorLog?.(error);
+      if (this.onError === "closed") throw error;
+      return { count: 1, resetAt: Date.now() + windowMs };
+    }
+  }
+  async reset(key) {
+    try {
+      await this.query(`DELETE FROM ${this.table} WHERE key = $1`, [key]);
+    } catch (error) {
+      this.onErrorLog?.(error);
+    }
+  }
+  async cleanup() {
+    try {
+      await this.query(`DELETE FROM ${this.table} WHERE reset_at <= now()`, []);
+    } catch (error) {
+      this.onErrorLog?.(error);
+    }
+  }
+  async maybeCleanup() {
+    if (this.cleanupIntervalMs <= 0) return;
+    const now = Date.now();
+    if (now - this.lastCleanup < this.cleanupIntervalMs) return;
+    this.lastCleanup = now;
+    await this.cleanup();
+  }
+};
 
 // src/rate-limit/client-id.ts
 var PLATFORM_HEADERS = {
@@ -384,6 +462,7 @@ function authErrorResponse(error) {
 
 exports.ForbiddenError = ForbiddenError;
 exports.MemoryStore = MemoryStore;
+exports.PostgresStore = PostgresStore;
 exports.RedisStore = RedisStore;
 exports.UnauthorizedError = UnauthorizedError;
 exports.addRateLimitHeaders = addRateLimitHeaders;
@@ -396,6 +475,7 @@ exports.getClientId = getClientId;
 exports.isAuthenticated = isAuthenticated;
 exports.isClerkConfigured = isClerkConfigured;
 exports.normalizeIpCandidate = normalizeIpCandidate;
+exports.postgresStoreSchema = postgresStoreSchema;
 exports.rateLimitExceededResponse = rateLimitExceededResponse;
 exports.rateLimitHeaders = rateLimitHeaders;
 exports.requireClerkUserId = requireClerkUserId;
