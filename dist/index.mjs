@@ -83,6 +83,10 @@ var RedisStore = class {
   }
 };
 var IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
+async function hashKey(key) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 function assertTable(table) {
   if (!IDENTIFIER.test(table)) {
     throw new Error(`Invalid rate-limit table name: ${JSON.stringify(table)}`);
@@ -126,7 +130,7 @@ var PostgresStore = class {
         reset_at = CASE WHEN r.reset_at <= now() THEN EXCLUDED.reset_at ELSE r.reset_at END
       RETURNING count, (extract(epoch FROM reset_at) * 1000)::float8 AS reset_at_ms`;
     try {
-      const [row] = await this.query(text, [key, windowMs]);
+      const [row] = await this.query(text, [await hashKey(key), windowMs]);
       if (!row) throw new Error("Rate-limit upsert returned no row");
       return {
         count: Number(row.count),
@@ -140,7 +144,7 @@ var PostgresStore = class {
   }
   async reset(key) {
     try {
-      await this.query(`DELETE FROM ${this.table} WHERE key = $1`, [key]);
+      await this.query(`DELETE FROM ${this.table} WHERE key = $1`, [await hashKey(key)]);
     } catch (error) {
       this.onErrorLog?.(error);
     }

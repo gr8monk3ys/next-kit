@@ -164,6 +164,11 @@ export const rateLimits = pgTable(
 );
 ```
 
+The `key` column holds a SHA-256 of the bucket key, not the key itself. Raw
+request-derived text can make the upsert throw (Postgres `text` rejects NUL
+bytes, and the index rejects very long entries), and a store that fails open
+would turn that into a way around the limit.
+
 Rows do not expire on their own. A key's expired row is reused by its next hit,
 and `hit` deletes the rest every `cleanupIntervalMs` (default 5 minutes, `0` to
 turn it off and call `limiter.cleanup()` from a cron instead).

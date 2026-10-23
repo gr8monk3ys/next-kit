@@ -144,7 +144,8 @@ declare function postgresStoreSchema(table?: string): string;
  * database clock, so every instance agrees on when it ends.
  *
  * Rows do not expire on their own: an expired row is reused by the next hit on
- * its key, and the rest are deleted by `cleanup()`.
+ * its key, and the rest are deleted by `cleanup()`. The `key` column holds the
+ * SHA-256 of the key, not the key itself.
  */
 declare class PostgresStore implements RateLimitStore {
     private readonly query;

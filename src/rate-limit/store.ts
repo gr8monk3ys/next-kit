@@ -223,6 +223,20 @@ export interface PostgresStoreOptions {
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
+/**
+ * SHA-256 of the key, as hex.
+ *
+ * Keys often carry request-derived text, and a raw one can make the upsert
+ * throw: `text` rejects NUL bytes and the primary-key index rejects entries
+ * over ~2.7 KB. A store that fails open would turn that error into a bypass, so
+ * the row stores a fixed-length digest that is always valid. Web Crypto, so it
+ * also runs on the edge runtime.
+ */
+async function hashKey(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function assertTable(table: string): string {
   // The table name is interpolated into the SQL, so it must be an identifier
   // and nothing else.
@@ -261,7 +275,8 @@ export function postgresStoreSchema(table = "rate_limits"): string {
  * database clock, so every instance agrees on when it ends.
  *
  * Rows do not expire on their own: an expired row is reused by the next hit on
- * its key, and the rest are deleted by `cleanup()`.
+ * its key, and the rest are deleted by `cleanup()`. The `key` column holds the
+ * SHA-256 of the key, not the key itself.
  */
 export class PostgresStore implements RateLimitStore {
   private readonly table: string;
@@ -296,7 +311,7 @@ export class PostgresStore implements RateLimitStore {
       RETURNING count, (extract(epoch FROM reset_at) * 1000)::float8 AS reset_at_ms`;
 
     try {
-      const [row] = await this.query(text, [key, windowMs]);
+      const [row] = await this.query(text, [await hashKey(key), windowMs]);
       if (!row) throw new Error("Rate-limit upsert returned no row");
       return {
         count: Number(row.count),
@@ -312,7 +327,7 @@ export class PostgresStore implements RateLimitStore {
 
   async reset(key: string): Promise<void> {
     try {
-      await this.query(`DELETE FROM ${this.table} WHERE key = $1`, [key]);
+      await this.query(`DELETE FROM ${this.table} WHERE key = $1`, [await hashKey(key)]);
     } catch (error) {
       this.onErrorLog?.(error);
     }

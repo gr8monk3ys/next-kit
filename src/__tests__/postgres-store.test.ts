@@ -106,8 +106,30 @@ describe("PostgresStore", () => {
     await sleep(30);
     await store.cleanup();
 
+    expect(await rowCount()).toBe(1);
+    expect((await store.hit("long", 60_000)).count).toBe(2);
+  });
+
+  it("stores a fixed-length digest, never the raw key", async () => {
+    const store = new PostgresStore(query);
+
+    await store.hit("203.0.113.7", 10_000);
+
     const keys = await db.query<{ key: string }>("SELECT key FROM rate_limits");
-    expect(keys.rows.map((r) => r.key)).toEqual(["long"]);
+    expect(keys.rows[0]!.key).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // Either key makes a raw-text upsert throw, which a fail-open store would
+  // turn into a bypass. Failing closed here proves the query no longer errors.
+  it.each([
+    ["a NUL byte", "user\u0000evil"],
+    // Random, so TOAST cannot compress it under the index's row limit.
+    ["~11 KB of random text", Array.from({ length: 300 }, () => crypto.randomUUID()).join("")],
+  ])("rate-limits a key containing %s instead of erroring", async (_, key) => {
+    const store = new PostgresStore(query, { onError: "closed" });
+
+    await store.hit(key, 10_000);
+    expect((await store.hit(key, 10_000)).count).toBe(2);
   });
 
   it("sweeps expired rows from hit once the interval has passed", async () => {
