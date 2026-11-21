@@ -1,0 +1,13 @@
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `gr8monk3ys/next-kit`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, label string equal to role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
