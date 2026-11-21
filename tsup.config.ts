@@ -12,7 +12,7 @@ export default defineConfig({
   dts: true,
   sourcemap: false,
   clean: true,
-  splitting: false,
+  splitting: true,
   treeshake: true,
   // Optional peers: never bundle them, and never fail the build for missing them.
   external: ["stripe", "next", "@clerk/nextjs", "@clerk/nextjs/server"],
