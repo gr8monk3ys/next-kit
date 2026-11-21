@@ -1,8 +1,8 @@
 # @gr8monk3ys/next-kit
 
 Server-side building blocks for Next.js apps, extracted from implementations
-that had been rewritten once per project: rate limiting, Stripe, and Clerk auth
-guards.
+that had been rewritten once per project: rate limiting, Stripe, and auth
+guards for Better Auth (and Clerk, kept for existing consumers).
 
 Every export is framework-neutral where it can be — the rate limiter and the
 auth guards speak the Web `Request`/`Response` types, which `NextRequest` and
@@ -16,7 +16,7 @@ The package is distributed as a GitHub release tarball, pinned to a tag:
 ```json
 {
   "dependencies": {
-    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.2.0.tar.gz"
+    "@gr8monk3ys/next-kit": "https://github.com/gr8monk3ys/next-kit/archive/refs/tags/v0.3.0.tar.gz"
   }
 }
 ```
@@ -34,7 +34,8 @@ resolves to the compiled `dist/`, so CommonJS consumers — Jest, for one — ne
 no configuration at all.
 
 Peer dependencies are all optional. Install only the ones for the subpaths you
-import: `stripe` for `/stripe`, `@clerk/nextjs` for `/auth/clerk`. The rate
+import: `stripe` for `/stripe`, `better-auth` and `next` for `/auth/better-auth`,
+`@clerk/nextjs` for `/auth/clerk`. The rate
 limiter needs nothing.
 
 ## `@gr8monk3ys/next-kit/rate-limit`
@@ -287,7 +288,53 @@ setDefaultStripeConfig({ apiVersion: "2026-05-27.dahlia" });
 Pass `config` to `getStripe()` only when you want a *separate* client with
 different settings — each distinct config gets its own instance.
 
+## `@gr8monk3ys/next-kit/auth/better-auth`
+
+```ts
+import { createBetterAuthGuards, activeOrganizationRole } from "@gr8monk3ys/next-kit/auth/better-auth";
+import { auth } from "@/lib/auth"; // your betterAuth({...}) instance
+
+export const { getUserOrNull, requireUser, requireRole, hasRole } = createBetterAuthGuards({
+  auth,
+  resolveUser: (session) => session.user, // or load your own row by session.user.id
+});
+
+const user = await requireUser();          // throws UnauthorizedError (401)
+const admin = await requireRole("admin");  // throws ForbiddenError (403)
+```
+
+The app owns its Better Auth instance, database, schema, routes and emails; this
+module only calls `auth.api.getSession` with the request headers (from
+`next/headers`, loaded on first use — pass `getHeaders` to supply them
+yourself). It never imports `better-auth`, and is typed structurally against
+the instance. A session whose `resolveUser` returns `null` is treated as signed
+out. A failing session lookup (database down) throws; it is not reported as
+signed out.
+
+Roles come from the resolved user's `role` string by default. Better Auth's
+comma-separated role lists (`"member,billing"`) are split. For organization
+roles, use the active organization's membership role:
+
+```ts
+createBetterAuthGuards({
+  auth,
+  resolveUser: (session) => session.user,
+  getRole: activeOrganizationRole(auth), // no active organization -> no role
+});
+```
+
+Any other `getRole(user, { session, headers })` may return one role, a list, or
+`null`, synchronously or as a promise. Roles are computed only by
+`hasRole` / `requireRole`.
+
+The guards throw exactly like the Clerk ones below: map them with
+`authErrorResponse` in a route handler, and use `getUserOrNull()` / `hasRole()`
+plus `redirect()` in a Server Component. `UnauthorizedError`, `ForbiddenError`
+and `authErrorResponse` are the same objects in both subpaths.
+
 ## `@gr8monk3ys/next-kit/auth/clerk`
+
+Kept for existing consumers; new apps should use `auth/better-auth`.
 
 ```ts
 import { createClerkAuth, UnauthorizedError } from "@gr8monk3ys/next-kit/auth/clerk";

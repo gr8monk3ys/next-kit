@@ -5,6 +5,7 @@ export default defineConfig({
     "src/index.ts",
     "src/rate-limit/index.ts",
     "src/stripe/index.ts",
+    "src/auth/better-auth.ts",
     "src/auth/clerk.ts",
   ],
   format: ["cjs", "esm"],

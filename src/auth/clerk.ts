@@ -1,6 +1,8 @@
 /**
  * `@gr8monk3ys/next-kit/auth/clerk`
  *
+ * Kept for existing consumers. New apps should use `auth/better-auth`.
+ *
  * The Clerk half of a server-side auth helper: resolve the signed-in Clerk user
  * id, hand it to whatever loader the app owns, and turn "no user" / "wrong role"
  * into errors instead of `null` checks at every call site.
@@ -44,6 +46,18 @@
  *   if (!user) redirect("/sign-in");
  *   ```
  */
+
+import {
+  createAuthGuards,
+  defaultGetRole,
+  UnauthorizedError,
+} from "./guards";
+
+export {
+  UnauthorizedError,
+  ForbiddenError,
+  authErrorResponse,
+} from "./guards";
 
 /** The subset of Clerk's `auth()` return value this package reads. */
 export interface ClerkAuthObject {
@@ -118,24 +132,6 @@ export async function isAuthenticated(): Promise<boolean> {
   return (await getClerkUserId()) !== null;
 }
 
-/** Thrown when no user is signed in. Carries HTTP 401. */
-export class UnauthorizedError extends Error {
-  readonly status = 401;
-  constructor(message = "Unauthorized") {
-    super(message);
-    this.name = "UnauthorizedError";
-  }
-}
-
-/** Thrown when a user is signed in but lacks the required role. Carries 403. */
-export class ForbiddenError extends Error {
-  readonly status = 403;
-  constructor(message = "Forbidden") {
-    super(message);
-    this.name = "ForbiddenError";
-  }
-}
-
 /** The Clerk user id, or a thrown {@link UnauthorizedError}. */
 export async function requireClerkUserId(): Promise<string> {
   const userId = await getClerkUserId();
@@ -191,14 +187,6 @@ export interface ClerkAuthHelpers<TUser> {
   requireRole(roles: string | string[]): Promise<TUser>;
 }
 
-function defaultGetRole(user: unknown): string | null {
-  if (user && typeof user === "object" && "role" in user) {
-    const role = (user as { role: unknown }).role;
-    return typeof role === "string" ? role : null;
-  }
-  return null;
-}
-
 /**
  * Bind the Clerk helpers to one app's user loader.
  *
@@ -213,7 +201,8 @@ function defaultGetRole(user: unknown): string | null {
 export function createClerkAuth<TUser>(
   options: ClerkAuthHelpersOptions<TUser>,
 ): ClerkAuthHelpers<TUser> {
-  const getRole = options.getRole ?? (defaultGetRole as (u: TUser) => string | null);
+  const getRole: (user: TUser) => string | null | undefined =
+    options.getRole ?? defaultGetRole;
 
   async function getUserOrNull(): Promise<TUser | null> {
     if (options.fallback && (await options.fallback.enabled())) {
@@ -227,42 +216,15 @@ export function createClerkAuth<TUser>(
     return (await options.resolveUser(clerkUserId)) ?? null;
   }
 
-  async function requireUser(): Promise<TUser> {
+  return createAuthGuards(async () => {
     const user = await getUserOrNull();
-    if (!user) throw new UnauthorizedError();
-    return user;
-  }
-
-  async function hasRole(roles: string | string[]): Promise<boolean> {
-    const user = await getUserOrNull();
-    if (!user) return false;
-    const role = getRole(user);
-    if (!role) return false;
-    return (Array.isArray(roles) ? roles : [roles]).includes(role);
-  }
-
-  async function requireRole(roles: string | string[]): Promise<TUser> {
-    const user = await requireUser();
-    const role = getRole(user);
-    const allowed = Array.isArray(roles) ? roles : [roles];
-    if (!role || !allowed.includes(role)) {
-      throw new ForbiddenError(
-        `Requires one of: ${allowed.join(", ")}`,
-      );
-    }
-    return user;
-  }
-
-  return { getUserOrNull, requireUser, hasRole, requireRole };
-}
-
-/** Map an {@link UnauthorizedError} / {@link ForbiddenError} to a JSON response. */
-export function authErrorResponse(error: unknown): Response | null {
-  if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
-    return new Response(
-      JSON.stringify({ error: error.message, statusCode: error.status }),
-      { status: error.status, headers: { "Content-Type": "application/json" } },
-    );
-  }
-  return null;
+    if (!user) return null;
+    return {
+      user,
+      roles: async () => {
+        const role = getRole(user);
+        return role ? [role] : [];
+      },
+    };
+  });
 }

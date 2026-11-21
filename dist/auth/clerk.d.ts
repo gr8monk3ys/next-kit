@@ -1,5 +1,9 @@
+export { F as ForbiddenError, U as UnauthorizedError, a as authErrorResponse } from '../guards-7etC0OqN.js';
+
 /**
  * `@gr8monk3ys/next-kit/auth/clerk`
+ *
+ * Kept for existing consumers. New apps should use `auth/better-auth`.
  *
  * The Clerk half of a server-side auth helper: resolve the signed-in Clerk user
  * id, hand it to whatever loader the app owns, and turn "no user" / "wrong role"
@@ -44,6 +48,7 @@
  *   if (!user) redirect("/sign-in");
  *   ```
  */
+
 /** The subset of Clerk's `auth()` return value this package reads. */
 interface ClerkAuthObject {
     userId: string | null;
@@ -73,16 +78,6 @@ declare function getClerkAuth(): Promise<ClerkAuthObject | null>;
 declare function getClerkUserId(): Promise<string | null>;
 /** Whether the current request carries a Clerk session. */
 declare function isAuthenticated(): Promise<boolean>;
-/** Thrown when no user is signed in. Carries HTTP 401. */
-declare class UnauthorizedError extends Error {
-    readonly status = 401;
-    constructor(message?: string);
-}
-/** Thrown when a user is signed in but lacks the required role. Carries 403. */
-declare class ForbiddenError extends Error {
-    readonly status = 403;
-    constructor(message?: string);
-}
 /** The Clerk user id, or a thrown {@link UnauthorizedError}. */
 declare function requireClerkUserId(): Promise<string>;
 interface ClerkAuthHelpersOptions<TUser> {
@@ -143,7 +138,5 @@ interface ClerkAuthHelpers<TUser> {
  * ```
  */
 declare function createClerkAuth<TUser>(options: ClerkAuthHelpersOptions<TUser>): ClerkAuthHelpers<TUser>;
-/** Map an {@link UnauthorizedError} / {@link ForbiddenError} to a JSON response. */
-declare function authErrorResponse(error: unknown): Response | null;
 
-export { type ClerkAuthHelpers, type ClerkAuthHelpersOptions, type ClerkAuthObject, type ClerkServerModule, ForbiddenError, UnauthorizedError, authErrorResponse, createClerkAuth, getClerkAuth, getClerkUserId, isAuthenticated, isClerkConfigured, requireClerkUserId, setClerkModule };
+export { type ClerkAuthHelpers, type ClerkAuthHelpersOptions, type ClerkAuthObject, type ClerkServerModule, createClerkAuth, getClerkAuth, getClerkUserId, isAuthenticated, isClerkConfigured, requireClerkUserId, setClerkModule };

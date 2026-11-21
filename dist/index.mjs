@@ -354,6 +354,101 @@ function withRateLimit(handler, options) {
   };
 }
 
+// src/auth/guards.ts
+var UnauthorizedError = class extends Error {
+  status = 401;
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+};
+var ForbiddenError = class extends Error {
+  status = 403;
+  constructor(message = "Forbidden") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+};
+function authErrorResponse(error) {
+  if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
+    return new Response(
+      JSON.stringify({ error: error.message, statusCode: error.status }),
+      { status: error.status, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  return null;
+}
+function defaultGetRole(user) {
+  if (user && typeof user === "object" && "role" in user) {
+    const role = user.role;
+    return typeof role === "string" ? role : null;
+  }
+  return null;
+}
+function createAuthGuards(load) {
+  async function getUserOrNull() {
+    return (await load())?.user ?? null;
+  }
+  async function requireUser() {
+    const user = await getUserOrNull();
+    if (!user) throw new UnauthorizedError();
+    return user;
+  }
+  async function hasRole(roles) {
+    const resolved = await load();
+    if (!resolved) return false;
+    const held = await resolved.roles();
+    return (Array.isArray(roles) ? roles : [roles]).some((r) => held.includes(r));
+  }
+  async function requireRole(roles) {
+    const resolved = await load();
+    if (!resolved) throw new UnauthorizedError();
+    const held = await resolved.roles();
+    const allowed = Array.isArray(roles) ? roles : [roles];
+    if (!allowed.some((r) => held.includes(r))) {
+      throw new ForbiddenError(`Requires one of: ${allowed.join(", ")}`);
+    }
+    return resolved.user;
+  }
+  return { getUserOrNull, requireUser, hasRole, requireRole };
+}
+
+// src/auth/better-auth.ts
+var nextHeadersPromise = null;
+async function nextHeaders() {
+  if (!nextHeadersPromise) {
+    const specifier = "next/headers";
+    nextHeadersPromise = import(specifier);
+  }
+  return (await nextHeadersPromise).headers();
+}
+function toRoleList(value) {
+  const list = typeof value === "string" ? [value] : value ?? [];
+  return list.flatMap((role) => role.split(",")).map((r) => r.trim()).filter(Boolean);
+}
+function activeOrganizationRole(auth) {
+  return async (_user, { session, headers }) => {
+    if (!session.session.activeOrganizationId) return null;
+    const member = await auth.api.getActiveMember({ headers });
+    return member?.role ?? null;
+  };
+}
+function createBetterAuthGuards(options) {
+  const getHeaders = options.getHeaders ?? nextHeaders;
+  const getRole = options.getRole ?? defaultGetRole;
+  return createAuthGuards(async () => {
+    const headers = await getHeaders();
+    const session = await options.auth.api.getSession({ headers });
+    if (!session) return null;
+    const user = await options.resolveUser(session);
+    if (!user) return null;
+    return {
+      user,
+      roles: async () => toRoleList(await getRole(user, { session, headers }))
+    };
+  });
+}
+
 // src/auth/clerk.ts
 var clerkModule = null;
 var clerkModulePromise = null;
@@ -390,31 +485,10 @@ async function getClerkUserId() {
 async function isAuthenticated() {
   return await getClerkUserId() !== null;
 }
-var UnauthorizedError = class extends Error {
-  status = 401;
-  constructor(message = "Unauthorized") {
-    super(message);
-    this.name = "UnauthorizedError";
-  }
-};
-var ForbiddenError = class extends Error {
-  status = 403;
-  constructor(message = "Forbidden") {
-    super(message);
-    this.name = "ForbiddenError";
-  }
-};
 async function requireClerkUserId() {
   const userId = await getClerkUserId();
   if (!userId) throw new UnauthorizedError();
   return userId;
-}
-function defaultGetRole(user) {
-  if (user && typeof user === "object" && "role" in user) {
-    const role = user.role;
-    return typeof role === "string" ? role : null;
-  }
-  return null;
 }
 function createClerkAuth(options) {
   const getRole = options.getRole ?? defaultGetRole;
@@ -427,39 +501,17 @@ function createClerkAuth(options) {
     if (!clerkUserId) return null;
     return await options.resolveUser(clerkUserId) ?? null;
   }
-  async function requireUser() {
+  return createAuthGuards(async () => {
     const user = await getUserOrNull();
-    if (!user) throw new UnauthorizedError();
-    return user;
-  }
-  async function hasRole(roles) {
-    const user = await getUserOrNull();
-    if (!user) return false;
-    const role = getRole(user);
-    if (!role) return false;
-    return (Array.isArray(roles) ? roles : [roles]).includes(role);
-  }
-  async function requireRole(roles) {
-    const user = await requireUser();
-    const role = getRole(user);
-    const allowed = Array.isArray(roles) ? roles : [roles];
-    if (!role || !allowed.includes(role)) {
-      throw new ForbiddenError(
-        `Requires one of: ${allowed.join(", ")}`
-      );
-    }
-    return user;
-  }
-  return { getUserOrNull, requireUser, hasRole, requireRole };
-}
-function authErrorResponse(error) {
-  if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
-    return new Response(
-      JSON.stringify({ error: error.message, statusCode: error.status }),
-      { status: error.status, headers: { "Content-Type": "application/json" } }
-    );
-  }
-  return null;
+    if (!user) return null;
+    return {
+      user,
+      roles: async () => {
+        const role = getRole(user);
+        return role ? [role] : [];
+      }
+    };
+  });
 }
 
-export { ForbiddenError, MemoryStore, PostgresStore, RedisStore, UnauthorizedError, addRateLimitHeaders, authErrorResponse, createClerkAuth, createRateLimiter, getClerkAuth, getClerkUserId, getClientId, isAuthenticated, isClerkConfigured, normalizeIpCandidate, postgresStoreSchema, rateLimitExceededResponse, rateLimitHeaders, requireClerkUserId, setClerkModule, withRateLimit };
+export { ForbiddenError, MemoryStore, PostgresStore, RedisStore, UnauthorizedError, activeOrganizationRole, addRateLimitHeaders, authErrorResponse, createBetterAuthGuards, createClerkAuth, createRateLimiter, getClerkAuth, getClerkUserId, getClientId, isAuthenticated, isClerkConfigured, normalizeIpCandidate, postgresStoreSchema, rateLimitExceededResponse, rateLimitHeaders, requireClerkUserId, setClerkModule, withRateLimit };
