@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fromPartial } from "@total-typescript/shoehorn";
 import type Stripe from "stripe";
 
 import {
@@ -74,17 +75,17 @@ describe("configuration reporting", () => {
 });
 
 describe("constructWebhookEvent", () => {
-  const event = { id: "evt_1", type: "checkout.session.completed" } as Stripe.Event;
+  const event = fromPartial<Stripe.Event>({ id: "evt_1", type: "checkout.session.completed" });
 
   function mockClient(impl?: () => Stripe.Event) {
-    return {
+    return fromPartial<Pick<Stripe, "webhooks">>({
       webhooks: {
         constructEvent: vi.fn(
           impl ??
             (() => event),
         ),
       },
-    } as unknown as Pick<Stripe, "webhooks">;
+    });
   }
 
   it("passes the RAW body, the signature header, and the secret to Stripe", async () => {
@@ -159,11 +160,11 @@ describe("constructWebhookEvent", () => {
 
 describe("createCheckoutSession", () => {
   function mockClient() {
-    return {
+    return fromPartial<Pick<Stripe, "checkout">>({
       checkout: {
         sessions: { create: vi.fn(async () => ({ id: "cs_1", url: "https://pay" })) },
       },
-    } as unknown as Pick<Stripe, "checkout">;
+    });
   }
 
   it("builds a subscription session with metadata on both the session and the sub", async () => {
@@ -242,11 +243,11 @@ describe("createCheckoutSession", () => {
 
 describe("createBillingPortalSession", () => {
   it("passes customer and return_url", async () => {
-    const client = {
+    const client = fromPartial<Pick<Stripe, "billingPortal">>({
       billingPortal: {
         sessions: { create: vi.fn(async () => ({ id: "bps_1", url: "https://portal" })) },
       },
-    } as unknown as Pick<Stripe, "billingPortal">;
+    });
 
     await createBillingPortalSession({
       client,

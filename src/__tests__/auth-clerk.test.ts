@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fromPartial } from "@total-typescript/shoehorn";
 
 import {
   setClerkModule,
@@ -161,7 +162,7 @@ describe("role checks", () => {
   it("a user with no role never satisfies requireRole", async () => {
     setClerkModule(mockClerk("clerk_roleless"));
     const auth = createClerkAuth({
-      resolveUser: async () => ({ id: "u", email: "e@test" }) as User,
+      resolveUser: async () => fromPartial<User>({ id: "u", email: "e@test" }),
     });
     await expect(auth.requireRole("admin")).rejects.toBeInstanceOf(ForbiddenError);
   });
