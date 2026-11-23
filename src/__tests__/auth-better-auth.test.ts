@@ -28,8 +28,8 @@ function session(userId: string): BetterAuthSession {
 function mockAuth(userId: string | null) {
   return {
     api: {
-      getSession: vi.fn(async (_: { headers: Headers }) =>
-        userId ? session(userId) : null,
+      getSession: vi.fn<(opts: { headers: Headers }) => Promise<BetterAuthSession | null>>(
+        async () => (userId ? session(userId) : null),
       ),
     },
   };
